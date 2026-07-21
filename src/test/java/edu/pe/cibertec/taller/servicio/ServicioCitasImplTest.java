@@ -9,12 +9,14 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import edu.pe.cibertec.taller.excepcion.CitaNoCancelableException;
 import edu.pe.cibertec.taller.excepcion.EspecialidadIncorrectaException;
 import edu.pe.cibertec.taller.excepcion.HorarioNoPermitidoException;
 import edu.pe.cibertec.taller.excepcion.MecanicoNoEncontradoException;
 import edu.pe.cibertec.taller.modelo.Cita;
 import edu.pe.cibertec.taller.modelo.EstadoCita;
 import edu.pe.cibertec.taller.modelo.Mecanico;
+import edu.pe.cibertec.taller.modelo.ResultadoCancelacion;
 import edu.pe.cibertec.taller.modelo.TipoServicio;
 import edu.pe.cibertec.taller.repositorio.RepositorioCitas;
 import edu.pe.cibertec.taller.repositorio.RepositorioMecanicos;
@@ -350,5 +352,142 @@ class ServicioCitasImplTest {
 
 		verify(repositorioCitas, never())
 				.save(any(Cita.class));
+	}
+	@Test
+	@DisplayName("Cancelar exactamente 24 horas antes no genera penalidad")
+	void cancelarConAnticipacionSuficiente() {
+		// Arrange
+		Long idCita = 1L;
+
+		Mecanico mecanico = new Mecanico(
+				1L,
+				"Josef Antoni Meza",
+				TipoServicio.CAMBIO_ACEITE
+		);
+
+		LocalDateTime fechaCita =
+				LocalDateTime.of(2026, 9, 10, 10, 0);
+
+		LocalDateTime fechaActual =
+				LocalDateTime.of(2026, 9, 9, 10, 0);
+
+		Cita cita = new Cita(
+				idCita,
+				mecanico,
+				"MEZ-150",
+				TipoServicio.CAMBIO_ACEITE,
+				fechaCita,
+				1,
+				EstadoCita.PROGRAMADA
+		);
+
+		when(repositorioCitas.findById(idCita))
+				.thenReturn(Optional.of(cita));
+
+		when(proveedorFechaHora.ahora())
+				.thenReturn(fechaActual);
+
+		// Act
+		ResultadoCancelacion resultado =
+				servicioCitas.cancelarCita(idCita);
+
+		// Assert
+		assertEquals(0.0, resultado.getMontoPenalidad());
+		assertEquals(EstadoCita.CANCELADA, cita.getEstado());
+		assertTrue(resultado.isExitoso());
+
+		verify(repositorioCitas, times(1))
+				.save(cita);
+
+		verify(servicioNotificaciones, times(1))
+				.notificarCitaCancelada(cita);
+	}
+	@Test
+	@DisplayName("Cancelar cuando faltan dos horas aplica una penalidad de 50.00")
+	void cancelarConAvisoTardio() {
+		// Arrange
+		Long idCita = 2L;
+
+		Mecanico mecanico = new Mecanico(
+				1L,
+				"Josef Antoni Meza",
+				TipoServicio.CAMBIO_ACEITE
+		);
+
+		LocalDateTime fechaCita =
+				LocalDateTime.of(2026, 9, 10, 10, 0);
+
+		LocalDateTime fechaActual =
+				LocalDateTime.of(2026, 9, 10, 8, 0);
+
+		Cita cita = new Cita(
+				idCita,
+				mecanico,
+				"MEZ-150",
+				TipoServicio.CAMBIO_ACEITE,
+				fechaCita,
+				1,
+				EstadoCita.PROGRAMADA
+		);
+
+		when(repositorioCitas.findById(idCita))
+				.thenReturn(Optional.of(cita));
+
+		when(proveedorFechaHora.ahora())
+				.thenReturn(fechaActual);
+
+		// Act
+		ResultadoCancelacion resultado =
+				servicioCitas.cancelarCita(idCita);
+
+		// Assert
+		assertEquals(50.0, resultado.getMontoPenalidad());
+		assertEquals(EstadoCita.CANCELADA, cita.getEstado());
+
+		verify(repositorioCitas, times(1))
+				.save(cita);
+	}
+	@Test
+	@DisplayName("Cancelar una cita atendida lanza CitaNoCancelableException")
+	void cancelarCitaAtendida() {
+		// Arrange
+		Long idCita = 3L;
+
+		Mecanico mecanico = new Mecanico(
+				1L,
+				"Josef Antoni Meza",
+				TipoServicio.CAMBIO_ACEITE
+		);
+
+		LocalDateTime fechaCita =
+				LocalDateTime.of(2026, 9, 10, 10, 0);
+
+		Cita cita = new Cita(
+				idCita,
+				mecanico,
+				"MEZ-150",
+				TipoServicio.CAMBIO_ACEITE,
+				fechaCita,
+				1,
+				EstadoCita.ATENDIDA
+		);
+
+		when(repositorioCitas.findById(idCita))
+				.thenReturn(Optional.of(cita));
+
+		// Act
+		CitaNoCancelableException excepcion = assertThrows(
+				CitaNoCancelableException.class,
+				() -> servicioCitas.cancelarCita(idCita)
+		);
+
+		// Assert
+		assertTrue(excepcion.getMessage().contains("programadas"));
+
+		verify(repositorioCitas, never())
+				.save(any(Cita.class));
+
+		verify(servicioNotificaciones, never())
+				.notificarCitaCancelada(any(Cita.class));
 	}
 }
